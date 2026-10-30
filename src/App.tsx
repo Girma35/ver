@@ -238,14 +238,15 @@ export default function App() {
 
         setCloudStatus('synced');
         setCloudError(null);
+        // Only after a successful read may local state be written back; otherwise a
+        // failed request would overwrite the stored row with empty defaults.
+        cloudReadyRef.current = true;
       } catch (error) {
         console.warn('[WorkEthio] Cloud load failed, staying local:', error);
         if (!cancelled) {
           setCloudStatus('error');
           setCloudError(error instanceof Error ? error.message : String(error));
         }
-      } finally {
-        cloudReadyRef.current = true;
       }
     };
 
@@ -325,11 +326,20 @@ export default function App() {
   const handleCompleteVerification = () => {
     const current = verificationRef.current;
     const verifiedAt = new Date().toLocaleString();
-    setVerificationState({
+    const verifiedState: VerificationState = {
       ...current,
       isVerified: true,
       verifiedAt,
-    });
+    };
+    setVerificationState(verifiedState);
+
+    // Persist immediately: the debounced effect below can be lost if the page is
+    // reloaded right after the user finishes verification.
+    if (isSupabaseConfigured) {
+      void saveVerificationToCloud(verifiedState).catch((error) => {
+        console.warn('[WorkEthio] Immediate verification save failed:', error);
+      });
+    }
 
     void saveVerificationSubmission({
       applicantName: current.applicantName,

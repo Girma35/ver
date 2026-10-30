@@ -51,6 +51,9 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   const isAm = language === 'am';
   const isOm = language === 'om';
 
+  // Documents are in Supabase Storage once they have an object path.
+  const storedInCloud = Boolean(state.idFilePath || state.selfieFilePath);
+
   // Applicant info state
   const [applicantName, setApplicantName] = useState(state.applicantName || 'Abebe Bikila');
   const [phoneNumber, setPhoneNumber] = useState(state.phoneNumber || '+251 91 123 4567');
@@ -61,6 +64,11 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   const [selectedDocType, setSelectedDocType] = useState<DocumentType>(state.documentType || 'fayda');
   const [consent, setConsent] = useState<boolean>(state.consentGiven || true);
   const [validationError, setValidationError] = useState<string | null>(null);
+  // Storage uploads run in the background; the submit waits for them so the record
+  // never ends up verified while the document is still missing from the bucket.
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const pendingUploadsRef = useRef<Promise<void>[]>([]);
 
   // Simulation loading state
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
@@ -110,10 +118,40 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     fileName: string,
     kind: 'id' | 'selfie'
   ): Promise<void> => {
+    const previousPath = kind === 'id' ? state.idFilePath : state.selfieFilePath;
+
+    // STEP 1 — as soon as a file is attached it goes straight to Supabase Storage.
+    // This runs before any local work so a slow disk/IndexedDB never delays it.
+    let uploadedPath: string | null = null;
+    const uploadTask = uploadKycFile(file, kind, fileName)
+      .then((cloudPath) => {
+        uploadedPath = cloudPath;
+        if (!cloudPath) return;
+        onUpdateState(kind === 'id' ? { idFilePath: cloudPath } : { selfieFilePath: cloudPath });
+        setUploadError(null);
+      })
+      .catch(() => {
+        setUploadError(
+          isOm
+            ? 'Faayiliin Supabase irratti hin olkaa\'amne. Irra deebi\'aa yaalaa.'
+            : isAm
+            ? 'ፋይሉ Supabase ላይ አልተሰቀለም። እባክዎ በድጋሚ ይሞክሩ።'
+            : 'The document could not be uploaded to Supabase Storage.'
+        );
+      });
+
+    pendingUploadsRef.current.push(uploadTask);
+    void uploadTask.finally(() => {
+      pendingUploadsRef.current = pendingUploadsRef.current.filter((item) => item !== uploadTask);
+      // Only drop the old object once its replacement is safely stored.
+      if (uploadedPath && previousPath && previousPath !== uploadedPath) {
+        void deleteKycFile(previousPath).catch(() => undefined);
+      }
+    });
+
+    // STEP 2 — local copy so the preview renders instantly.
     const stored = await saveVerificationFile(file, kind, fileName);
     const previewUrl = URL.createObjectURL(stored.blob);
-    // Local copy first so the preview is instant; Storage sync is best-effort.
-    const cloudPath = await uploadKycFile(stored.blob, kind, fileName).catch(() => null);
 
     if (kind === 'id') {
       if (state.idPreviewUrl?.startsWith('blob:')) {
@@ -122,14 +160,10 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
       if (state.idFileId) {
         await deleteVerificationFile(state.idFileId).catch(() => undefined);
       }
-      if (state.idFilePath && state.idFilePath !== cloudPath) {
-        await deleteKycFile(state.idFilePath).catch(() => undefined);
-      }
       onUpdateState({
         idFileName: stored.name,
         idFileId: stored.id,
         idPreviewUrl: previewUrl,
-        idFilePath: cloudPath,
         documentType: selectedDocType,
       });
       return;
@@ -141,20 +175,21 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     if (state.selfieFileId) {
       await deleteVerificationFile(state.selfieFileId).catch(() => undefined);
     }
-    if (state.selfieFilePath && state.selfieFilePath !== cloudPath) {
-      await deleteKycFile(state.selfieFilePath).catch(() => undefined);
-    }
     onUpdateState({
       selfieFileName: stored.name,
       selfieFileId: stored.id,
       selfiePreviewUrl: previewUrl,
-      selfieFilePath: cloudPath,
     });
   };
 
+  // Accept anything that is clearly an image: phone cameras may report image/heic,
+  // image/webp, or no MIME type at all.
+  const isImageFile = (file: File) =>
+    file.type.startsWith('image/') || /\.(jpe?g|png|webp|heic|heif|bmp)$/i.test(file.name);
+
   // Handle ID document file upload
   const handleIdFileUpload = (file: File) => {
-    if (!file.type.match(/^image\/(jpeg|jpg|png)$/)) {
+    if (!isImageFile(file)) {
       setValidationError(
         isOm
           ? 'Moo ee suuraa sirrii (JPG, JPEG ykn PNG) filadhaa.'
@@ -172,14 +207,14 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
           ? 'Fayyadama kuusaa hin milkoofne. Irra deebi\'aa yaalaa.'
           : isAm
           ? 'ፋይሉን ወደ መረጃ ቋቱ ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።'
-          : 'Could not save the ID file to the local database. Please try again.'
+          : 'Could not save the ID document. Please try again.'
       );
     });
   };
 
   // Handle Selfie file upload
   const handleSelfieFileUpload = (file: File) => {
-    if (!file.type.match(/^image\/(jpeg|jpg|png)$/)) {
+    if (!isImageFile(file)) {
       setValidationError(
         isOm
           ? 'Moo ee suuraa sirrii (JPG, JPEG ykn PNG) filadhaa.'
@@ -197,7 +232,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
           ? 'Suuraan fuulaa kuusaa irratti hin tolfamne. Irra deebi\'aa yaalaa.'
           : isAm
           ? 'የፊት ፎቶውን ወደ መረጃ ቋቱ ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።'
-          : 'Could not save the selfie file to the local database. Please try again.'
+          : 'Could not save the selfie photo. Please try again.'
       );
     });
   };
@@ -278,7 +313,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   };
 
   // Submit verification form
-  const handleSubmitVerification = (e: React.FormEvent) => {
+  const handleSubmitVerification = async (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError(null);
 
@@ -317,6 +352,13 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
       city,
       idNumber,
     });
+
+    // Wait for any in-flight Storage upload so the stored paths are known first.
+    if (pendingUploadsRef.current.length > 0) {
+      setIsUploading(true);
+      await Promise.allSettled(pendingUploadsRef.current);
+      setIsUploading(false);
+    }
 
     // Start verification pipeline
     setIsSimulating(true);
@@ -437,23 +479,38 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                 <Database className="w-4 h-4 text-slate-500 shrink-0" />
                 <span>
                   {isOm
-                    ? `Fayyadama kuusaa: ID #${state.idFileId ?? '—'} · Selfie #${state.selfieFileId ?? '—'} · Galmee #${state.submissionId ?? '—'}`
+                    ? `${storedInCloud ? 'Kuusaa Supabase keessatti' : 'Meeshaa kana irratti'}: ID #${state.idFileId ?? '—'} · Selfie #${state.selfieFileId ?? '—'} · Galmee #${state.submissionId ?? '—'}`
                     : isAm
-                    ? `በመረጃ ቋት የተቀመጠ: መታወቂያ #${state.idFileId ?? '—'} · ሴልፊ #${state.selfieFileId ?? '—'} · መዝገብ #${state.submissionId ?? '—'}`
-                    : `Stored locally: ID file #${state.idFileId ?? '—'} · Selfie #${state.selfieFileId ?? '—'} · Submission #${state.submissionId ?? '—'}`}
+                    ? `${storedInCloud ? 'በSupabase ማከማቻ' : 'በዚህ መሣሪያ ላይ'}: መታወቂያ #${state.idFileId ?? '—'} · ሴልፊ #${state.selfieFileId ?? '—'} · መዝገብ #${state.submissionId ?? '—'}`
+                    : `${storedInCloud ? 'Stored in Supabase Storage' : 'Stored on this device'}: ID file #${state.idFileId ?? '—'} · Selfie #${state.selfieFileId ?? '—'} · Submission #${state.submissionId ?? '—'}`}
                 </span>
               </div>
             )}
           </div>
 
-          {/* Action Button: Return directly to Tasks */}
-          <div className="flex items-center justify-center">
+          {/* Actions: return to Tasks, or reopen the form to replace documents */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             <button
               onClick={onNavigateToEarn}
               className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm px-7 py-3.5 rounded-lg shadow-sm transition-colors cursor-pointer"
             >
               <span>{isOm ? 'Gara Hojiiwwaniitti Deebi\'i' : isAm ? 'ወደ ስራዎች ተመለስ' : 'Start Earning Tasks'}</span>
               <ArrowRight className="w-4 h-4" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onUpdateState({ isVerified: false })}
+              className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-white hover:bg-slate-50 text-slate-800 font-semibold text-sm px-7 py-3.5 rounded-lg border border-slate-300 shadow-xs transition-colors cursor-pointer"
+            >
+              <RefreshCw className="w-4 h-4 text-slate-500" />
+              <span>
+                {isOm
+                  ? 'Waraqaa Jijjiiri / Irra Deebi\'ii Galchi'
+                  : isAm
+                  ? 'ሰነድ ቀይር / እንደገና አስገባ'
+                  : 'Update Documents'}
+              </span>
             </button>
           </div>
         </div>
@@ -583,6 +640,18 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               {isOm ? 'Xiyyeeffannoon Barbaachisa' : isAm ? 'ትኩረት ያስፈልጋል' : 'Submission Incomplete'}
             </p>
             <p className="text-xs mt-0.5">{validationError}</p>
+          </div>
+        </div>
+      )}
+
+      {uploadError && (
+        <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-3 text-amber-900 text-sm">
+          <AlertCircle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-semibold">
+              {isOm ? 'Olkaa\'uun hin milkoofne' : isAm ? 'መስቀል አልተቻለም' : 'Cloud upload failed'}
+            </p>
+            <p className="text-xs mt-0.5">{uploadError}</p>
           </div>
         </div>
       )}
@@ -752,8 +821,10 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                     {state.idFileName || 'Selected Document'}
                   </span>
                   <span className="text-[11px] text-emerald-700 font-mono">
-                    {state.idFileId
-                      ? `Saved to local database · file #${state.idFileId}`
+                    {state.idFilePath
+                      ? `Stored in Supabase Storage · file #${state.idFileId ?? '—'}`
+                      : state.idFileId
+                      ? `Saved on this device · file #${state.idFileId}`
                       : 'OCR Status: Ready for verification'}
                   </span>
                 </div>
@@ -762,7 +833,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                   <input
                     ref={idInputRef}
                     type="file"
-                    accept="image/png,image/jpeg,image/jpg"
+                    accept="image/*"
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
@@ -805,7 +876,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               <input
                 ref={idInputRef}
                 type="file"
-                accept="image/png,image/jpeg,image/jpg"
+                accept="image/*"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
@@ -883,8 +954,10 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                     {state.selfieFileName || 'Selected Face Photo'}
                   </span>
                   <span className="text-[11px] text-emerald-700 font-mono">
-                    {state.selfieFileId
-                      ? `Saved to local database · file #${state.selfieFileId}`
+                    {state.selfieFilePath
+                      ? `Stored in Supabase Storage · file #${state.selfieFileId ?? '—'}`
+                      : state.selfieFileId
+                      ? `Saved on this device · file #${state.selfieFileId}`
                       : 'Liveness check: Passed'}
                   </span>
                 </div>
@@ -893,7 +966,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                   <input
                     ref={selfieInputRef}
                     type="file"
-                    accept="image/png,image/jpeg,image/jpg"
+                    accept="image/*"
                     className="hidden"
                     onChange={(e) => {
                       if (e.target.files && e.target.files[0]) {
@@ -936,7 +1009,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
               <input
                 ref={selfieInputRef}
                 type="file"
-                accept="image/png,image/jpeg,image/jpg"
+                accept="image/*"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files && e.target.files[0]) {
@@ -974,10 +1047,21 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
 
           <button
             type="submit"
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-sm px-7 py-3 rounded-lg shadow-sm transition-colors cursor-pointer"
+            disabled={isUploading}
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-60 disabled:cursor-wait text-white font-semibold text-sm px-7 py-3 rounded-lg shadow-sm transition-colors cursor-pointer"
           >
             <span>
-              {isOm ? 'Mirkaneessa Galchi' : isAm ? 'ማረጋገጫውን አስገባ' : 'Submit Verification'}
+              {isUploading
+                ? isOm
+                  ? 'Olkaa\'aa jira...'
+                  : isAm
+                  ? 'በመስቀል ላይ...'
+                  : 'Uploading documents...'
+                : isOm
+                ? 'Mirkaneessa Galchi'
+                : isAm
+                ? 'ማረጋገጫውን አስገባ'
+                : 'Submit Verification'}
             </span>
             <ArrowRight className="w-4 h-4" />
           </button>

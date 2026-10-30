@@ -28,6 +28,24 @@ export function buildKycObjectPath(kind: VerificationFileKind, fileName: string)
   return `${DEMO_PROFILE_ID}/${kind}/${safeFileName(fileName)}`;
 }
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+  heic: 'image/heic',
+  heif: 'image/heif',
+  bmp: 'image/bmp',
+};
+
+// Phone cameras sometimes hand over a file with no MIME type; infer it from the name so
+// the stored object still renders as an image instead of downloading as a binary.
+function resolveContentType(file: Blob, fileName: string): string {
+  if (file.type) return file.type;
+  const extension = fileName.split('.').pop()?.toLowerCase() ?? '';
+  return MIME_BY_EXTENSION[extension] ?? 'application/octet-stream';
+}
+
 /** Uploads one document and returns its object path (null when storage is off). */
 export async function uploadKycFile(
   file: Blob,
@@ -37,8 +55,11 @@ export async function uploadKycFile(
   if (!supabase) return null;
 
   const path = buildKycObjectPath(kind, fileName);
-  const { error } = await supabase.storage.from(KYC_BUCKET).upload(path, file, {
-    contentType: file.type || 'application/octet-stream',
+  const contentType = resolveContentType(file, fileName);
+  // storage-js reads the content type from the Blob, so re-wrap when the picker gave none.
+  const uploadBody = file.type === contentType ? file : new Blob([file], { type: contentType });
+  const { error } = await supabase.storage.from(KYC_BUCKET).upload(path, uploadBody, {
+    contentType,
     upsert: true,
   });
 
