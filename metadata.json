@@ -1,0 +1,6 @@
+{
+  "name": "WorkEthio - Ethiopian Identity Verification & Earning Platform",
+  "description": "A simulated Ethiopian identity verification and digital earning platform demonstration for academic assignment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
