@@ -25,10 +25,13 @@ export interface VerificationState {
   documentType: DocumentType;
   idNumber: string;
   idFileName: string | null;
+  idFileId: number | null;
   idPreviewUrl: string | null;
   selfieFileName: string | null;
+  selfieFileId: number | null;
   selfiePreviewUrl: string | null;
   consentGiven: boolean;
+  submissionId: number | null;
 }
 
 export type TaskDifficulty = 'Beginner' | 'Intermediate' | 'Advanced';

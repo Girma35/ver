@@ -1,9 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { PageType, Language, VerificationState, UserWallet } from './types';
 import { Navbar } from './components/Navbar';
 import { VerificationPage } from './components/VerificationPage';
 import { EarnMoneyPage } from './components/EarnMoneyPage';
 import { ShieldCheck, RotateCcw } from 'lucide-react';
+import {
+  clearVerificationDatabase,
+  getVerificationFile,
+  saveVerificationSubmission,
+} from './lib/verificationDb';
 
 const STORAGE_KEY_VERIFICATION = 'workethio_verification_state_v3';
 const STORAGE_KEY_WALLET = 'workethio_wallet_state_v3';
@@ -19,10 +24,13 @@ const INITIAL_VERIFICATION_STATE: VerificationState = {
   documentType: 'fayda',
   idNumber: 'FIN-0982-1402-9912',
   idFileName: null,
+  idFileId: null,
   idPreviewUrl: null,
   selfieFileName: null,
+  selfieFileId: null,
   selfiePreviewUrl: null,
   consentGiven: true,
+  submissionId: null,
 };
 
 const INITIAL_WALLET_STATE: UserWallet = {
@@ -55,11 +63,19 @@ export default function App() {
     return 'om'; // Default to Afaan Oromoo as preferred by user
   });
 
-  // Verification State
+  // Verification State (file previews are hydrated from IndexedDB, not sessionStorage)
   const [verificationState, setVerificationState] = useState<VerificationState>(() => {
     try {
       const saved = sessionStorage.getItem(STORAGE_KEY_VERIFICATION);
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        const parsed = JSON.parse(saved) as VerificationState;
+        return {
+          ...INITIAL_VERIFICATION_STATE,
+          ...parsed,
+          idPreviewUrl: null,
+          selfiePreviewUrl: null,
+        };
+      }
     } catch (e) {
       // Ignore
     }
@@ -96,11 +112,49 @@ export default function App() {
 
   useEffect(() => {
     try {
-      sessionStorage.setItem(STORAGE_KEY_VERIFICATION, JSON.stringify(verificationState));
+      const { idPreviewUrl: _idPreview, selfiePreviewUrl: _selfiePreview, ...persistable } =
+        verificationState;
+      sessionStorage.setItem(STORAGE_KEY_VERIFICATION, JSON.stringify(persistable));
     } catch (e) {
       // Ignore
     }
   }, [verificationState]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateFiles = async () => {
+      const updates: Partial<VerificationState> = {};
+
+      if (verificationState.idFileId) {
+        const stored = await getVerificationFile(verificationState.idFileId);
+        if (stored) {
+          updates.idPreviewUrl = URL.createObjectURL(stored.blob);
+          updates.idFileName = stored.name;
+        }
+      }
+
+      if (verificationState.selfieFileId) {
+        const stored = await getVerificationFile(verificationState.selfieFileId);
+        if (stored) {
+          updates.selfiePreviewUrl = URL.createObjectURL(stored.blob);
+          updates.selfieFileName = stored.name;
+        }
+      }
+
+      if (!cancelled && Object.keys(updates).length > 0) {
+        setVerificationState((prev) => ({ ...prev, ...updates }));
+      }
+    };
+
+    void hydrateFiles();
+
+    return () => {
+      cancelled = true;
+    };
+    // Hydrate once on mount from stored file IDs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     try {
@@ -110,17 +164,40 @@ export default function App() {
     }
   }, [walletState]);
 
+  const verificationRef = useRef(verificationState);
+  verificationRef.current = verificationState;
+
   // Handlers
   const handleUpdateVerificationState = (updates: Partial<VerificationState>) => {
     setVerificationState((prev) => ({ ...prev, ...updates }));
   };
 
   const handleCompleteVerification = () => {
-    setVerificationState((prev) => ({
-      ...prev,
+    const current = verificationRef.current;
+    const verifiedAt = new Date().toLocaleString();
+    setVerificationState({
+      ...current,
       isVerified: true,
-      verifiedAt: new Date().toLocaleString(),
-    }));
+      verifiedAt,
+    });
+
+    void saveVerificationSubmission({
+      applicantName: current.applicantName,
+      phoneNumber: current.phoneNumber,
+      city: current.city,
+      documentType: current.documentType,
+      idNumber: current.idNumber,
+      idFileId: current.idFileId,
+      selfieFileId: current.selfieFileId,
+      createdAt: new Date().toISOString(),
+    })
+      .then((saved) => {
+        setVerificationState((prev) => ({
+          ...prev,
+          submissionId: saved.id ?? prev.submissionId,
+        }));
+      })
+      .catch(() => undefined);
   };
 
   const handleUpdateWallet = (updates: Partial<UserWallet>) => {
@@ -135,6 +212,13 @@ export default function App() {
     } catch (e) {
       // Ignore
     }
+    if (verificationState.idPreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(verificationState.idPreviewUrl);
+    }
+    if (verificationState.selfiePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(verificationState.selfiePreviewUrl);
+    }
+    void clearVerificationDatabase();
     setVerificationState(INITIAL_VERIFICATION_STATE);
     setWalletState(INITIAL_WALLET_STATE);
     setCurrentPage('tasks');

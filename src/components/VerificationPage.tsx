@@ -10,6 +10,11 @@ import {
   SAMPLE_SELFIE_IMAGE,
 } from '../constants';
 import {
+  blobFromUrl,
+  deleteVerificationFile,
+  saveVerificationFile,
+} from '../lib/verificationDb';
+import {
   UploadCloud,
   FileText,
   User,
@@ -24,6 +29,7 @@ import {
   MapPin,
   Phone,
   Lock,
+  Database,
 } from 'lucide-react';
 
 interface VerificationPageProps {
@@ -98,6 +104,43 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     },
   ];
 
+  const persistFile = async (
+    file: Blob,
+    fileName: string,
+    kind: 'id' | 'selfie'
+  ): Promise<void> => {
+    const stored = await saveVerificationFile(file, kind, fileName);
+    const previewUrl = URL.createObjectURL(stored.blob);
+
+    if (kind === 'id') {
+      if (state.idPreviewUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(state.idPreviewUrl);
+      }
+      if (state.idFileId) {
+        await deleteVerificationFile(state.idFileId).catch(() => undefined);
+      }
+      onUpdateState({
+        idFileName: stored.name,
+        idFileId: stored.id,
+        idPreviewUrl: previewUrl,
+        documentType: selectedDocType,
+      });
+      return;
+    }
+
+    if (state.selfiePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(state.selfiePreviewUrl);
+    }
+    if (state.selfieFileId) {
+      await deleteVerificationFile(state.selfieFileId).catch(() => undefined);
+    }
+    onUpdateState({
+      selfieFileName: stored.name,
+      selfieFileId: stored.id,
+      selfiePreviewUrl: previewUrl,
+    });
+  };
+
   // Handle ID document file upload
   const handleIdFileUpload = (file: File) => {
     if (!file.type.match(/^image\/(jpeg|jpg|png)$/)) {
@@ -112,15 +155,15 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     }
 
     setValidationError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      onUpdateState({
-        idFileName: file.name,
-        idPreviewUrl: e.target?.result as string,
-        documentType: selectedDocType,
-      });
-    };
-    reader.readAsDataURL(file);
+    void persistFile(file, file.name, 'id').catch(() => {
+      setValidationError(
+        isOm
+          ? 'Fayyadama kuusaa hin milkoofne. Irra deebi\'aa yaalaa.'
+          : isAm
+          ? 'ፋይሉን ወደ መረጃ ቋቱ ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።'
+          : 'Could not save the ID file to the local database. Please try again.'
+      );
+    });
   };
 
   // Handle Selfie file upload
@@ -137,42 +180,67 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     }
 
     setValidationError(null);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      onUpdateState({
-        selfieFileName: file.name,
-        selfiePreviewUrl: e.target?.result as string,
-      });
-    };
-    reader.readAsDataURL(file);
+    void persistFile(file, file.name, 'selfie').catch(() => {
+      setValidationError(
+        isOm
+          ? 'Suuraan fuulaa kuusaa irratti hin tolfamne. Irra deebi\'aa yaalaa.'
+          : isAm
+          ? 'የፊት ፎቶውን ወደ መረጃ ቋቱ ማስቀመጥ አልተቻለም። እባክዎ እንደገና ይሞክሩ።'
+          : 'Could not save the selfie file to the local database. Please try again.'
+      );
+    });
   };
 
   // Pre-load sample Ethiopian ID
   const handleUseSampleId = () => {
     setValidationError(null);
-    onUpdateState({
-      idFileName: 'ethiopian_fayda_national_id_sample.jpg',
-      idPreviewUrl: SAMPLE_ID_IMAGE,
-      documentType: 'fayda',
-      applicantName: applicantName || 'Abebe Bikila',
-      idNumber: idNumber || 'FIN-0982-1402-9912',
-    });
     setSelectedDocType('fayda');
+    const fileName = 'ethiopian_fayda_national_id_sample.jpg';
+    void (async () => {
+      const blob = await blobFromUrl(SAMPLE_ID_IMAGE);
+      await persistFile(blob, fileName, 'id');
+      onUpdateState({
+        documentType: 'fayda',
+        applicantName: applicantName || 'Abebe Bikila',
+        idNumber: idNumber || 'FIN-0982-1402-9912',
+      });
+    })().catch(() => {
+      onUpdateState({
+        idFileName: fileName,
+        idPreviewUrl: SAMPLE_ID_IMAGE,
+        documentType: 'fayda',
+        applicantName: applicantName || 'Abebe Bikila',
+        idNumber: idNumber || 'FIN-0982-1402-9912',
+      });
+    });
   };
 
   // Pre-load sample Selfie
   const handleUseSampleSelfie = () => {
     setValidationError(null);
-    onUpdateState({
-      selfieFileName: 'ethiopian_freelancer_selfie_sample.jpg',
-      selfiePreviewUrl: SAMPLE_SELFIE_IMAGE,
+    const fileName = 'ethiopian_freelancer_selfie_sample.jpg';
+    void (async () => {
+      const blob = await blobFromUrl(SAMPLE_SELFIE_IMAGE);
+      await persistFile(blob, fileName, 'selfie');
+    })().catch(() => {
+      onUpdateState({
+        selfieFileName: fileName,
+        selfiePreviewUrl: SAMPLE_SELFIE_IMAGE,
+      });
     });
   };
 
   // Remove ID
   const handleRemoveId = () => {
+    if (state.idPreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(state.idPreviewUrl);
+    }
+    if (state.idFileId) {
+      void deleteVerificationFile(state.idFileId).catch(() => undefined);
+    }
     onUpdateState({
       idFileName: null,
+      idFileId: null,
       idPreviewUrl: null,
     });
     if (idInputRef.current) idInputRef.current.value = '';
@@ -180,8 +248,15 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
 
   // Remove Selfie
   const handleRemoveSelfie = () => {
+    if (state.selfiePreviewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(state.selfiePreviewUrl);
+    }
+    if (state.selfieFileId) {
+      void deleteVerificationFile(state.selfieFileId).catch(() => undefined);
+    }
     onUpdateState({
       selfieFileName: null,
+      selfieFileId: null,
       selfiePreviewUrl: null,
     });
     if (selfieInputRef.current) selfieInputRef.current.value = '';
@@ -342,6 +417,18 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                   : 'Identity verification completed and approved.'}
               </span>
             </div>
+            {(state.idFileId || state.selfieFileId || state.submissionId) && (
+              <div className="mt-2 text-xs text-slate-600 flex items-center gap-1.5">
+                <Database className="w-4 h-4 text-slate-500 shrink-0" />
+                <span>
+                  {isOm
+                    ? `Fayyadama kuusaa: ID #${state.idFileId ?? '—'} · Selfie #${state.selfieFileId ?? '—'} · Galmee #${state.submissionId ?? '—'}`
+                    : isAm
+                    ? `በመረጃ ቋት የተቀመጠ: መታወቂያ #${state.idFileId ?? '—'} · ሴልፊ #${state.selfieFileId ?? '—'} · መዝገብ #${state.submissionId ?? '—'}`
+                    : `Stored locally: ID file #${state.idFileId ?? '—'} · Selfie #${state.selfieFileId ?? '—'} · Submission #${state.submissionId ?? '—'}`}
+                </span>
+              </div>
+            )}
           </div>
 
           {/* Action Button: Return directly to Tasks */}
@@ -650,7 +737,9 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                     {state.idFileName || 'Selected Document'}
                   </span>
                   <span className="text-[11px] text-emerald-700 font-mono">
-                    OCR Status: Ready for verification
+                    {state.idFileId
+                      ? `Saved to local database · file #${state.idFileId}`
+                      : 'OCR Status: Ready for verification'}
                   </span>
                 </div>
 
@@ -779,7 +868,9 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                     {state.selfieFileName || 'Selected Face Photo'}
                   </span>
                   <span className="text-[11px] text-emerald-700 font-mono">
-                    Liveness check: Passed
+                    {state.selfieFileId
+                      ? `Saved to local database · file #${state.selfieFileId}`
+                      : 'Liveness check: Passed'}
                   </span>
                 </div>
 
