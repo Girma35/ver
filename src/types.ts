@@ -27,9 +27,13 @@ export interface VerificationState {
   idFileName: string | null;
   idFileId: number | null;
   idPreviewUrl: string | null;
+  /** Supabase Storage object path for the ID document (null until uploaded). */
+  idFilePath: string | null;
   selfieFileName: string | null;
   selfieFileId: number | null;
   selfiePreviewUrl: string | null;
+  /** Supabase Storage object path for the selfie (null until uploaded). */
+  selfieFilePath: string | null;
   consentGiven: boolean;
   submissionId: number | null;
 }

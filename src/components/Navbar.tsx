@@ -61,9 +61,9 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-slate-200">
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
+      <div className="max-w-6xl mx-auto px-3 sm:px-6 py-2 sm:py-0 sm:h-16 flex flex-wrap items-center justify-between gap-x-2 gap-y-2">
         {/* Zone 1: Brand Wordmark & Ethiopia Identity */}
-        <div className="flex items-center gap-3 shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
           <button
             onClick={() => onNavigate('tasks')}
             className="flex items-center gap-2.5 text-left group cursor-pointer focus:outline-none"
@@ -77,11 +77,11 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <div className="flex-1 bg-red-500"></div>
               </div>
             </div>
-            <div>
-              <span className="text-base font-bold tracking-tight text-slate-900 block leading-tight">
+            <div className="min-w-0">
+              <span className="text-sm sm:text-base font-bold tracking-tight text-slate-900 block leading-tight">
                 WorkEthio
               </span>
-              <span className="text-[11px] font-medium text-slate-500 block leading-tight">
+              <span className="hidden sm:block text-[11px] font-medium text-slate-500 leading-tight truncate">
                 {brandSubtitle}
               </span>
             </div>
@@ -89,27 +89,31 @@ export const Navbar: React.FC<NavbarProps> = ({
         </div>
 
         {/* Zone 2: Strictly EXACTLY TWO Main Pages */}
-        <nav className="flex items-center gap-1 sm:gap-2 text-sm font-medium">
+        <nav className="order-3 flex w-full items-center gap-1 sm:order-none sm:w-auto sm:gap-2 text-sm font-medium">
           <button
             onClick={() => onNavigate('tasks')}
-            className={`px-3.5 py-1.5 rounded-md transition-colors whitespace-nowrap text-xs sm:text-sm font-semibold cursor-pointer ${
+            className={`flex-1 sm:flex-none text-center px-2.5 sm:px-3.5 py-1.5 rounded-md transition-colors whitespace-nowrap text-[11px] sm:text-sm font-semibold cursor-pointer ${
               currentPage === 'tasks'
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            {navTasksLabel}
+            <span className="sm:hidden">
+              {isOm ? '1. Hojiiwwan' : isAm ? '1. ስራዎች' : '1. Tasks'}
+            </span>
+            <span className="hidden sm:inline">{navTasksLabel}</span>
           </button>
 
           <button
             onClick={() => onNavigate('verification')}
-            className={`px-3.5 py-1.5 rounded-md transition-colors whitespace-nowrap text-xs sm:text-sm font-semibold cursor-pointer flex items-center gap-1.5 ${
+            className={`flex-1 sm:flex-none justify-center px-2.5 sm:px-3.5 py-1.5 rounded-md transition-colors whitespace-nowrap text-[11px] sm:text-sm font-semibold cursor-pointer flex items-center gap-1.5 ${
               currentPage === 'verification'
                 ? 'bg-slate-900 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            <span>{navVerificationLabel}</span>
+            <span className="sm:hidden">{isOm || isAm ? '2. KYC' : '2. Verification'}</span>
+            <span className="hidden sm:inline">{navVerificationLabel}</span>
             {!isVerified && (
               <span className="w-2 h-2 rounded-full bg-amber-500" title="Verification required" />
             )}
@@ -117,7 +121,7 @@ export const Navbar: React.FC<NavbarProps> = ({
         </nav>
 
         {/* Zone 3: Actions & Controls */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Status Badge */}
           <div className="hidden lg:flex items-center gap-1.5 text-xs font-medium text-slate-600 px-2.5 py-1 rounded-md bg-slate-50 border border-slate-200">
             {isVerified ? (
@@ -137,7 +141,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs">
             <button
               onClick={() => onChangeLanguage('en')}
-              className={`px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
+              className={`px-1.5 sm:px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
                 language === 'en'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
                   : 'text-slate-600 hover:text-slate-900'
@@ -147,23 +151,25 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
             <button
               onClick={() => onChangeLanguage('am')}
-              className={`px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
+              className={`px-1.5 sm:px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
                 language === 'am'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              አማርኛ
+              <span className="sm:hidden">አማ</span>
+              <span className="hidden sm:inline">አማርኛ</span>
             </button>
             <button
               onClick={() => onChangeLanguage('om')}
-              className={`px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
+              className={`px-1.5 sm:px-2 py-1 rounded font-medium transition-colors cursor-pointer ${
                 language === 'om'
                   ? 'bg-white text-slate-900 shadow-xs font-semibold'
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              Afaan Oromoo
+              <span className="sm:hidden">OM</span>
+              <span className="hidden sm:inline">Afaan Oromoo</span>
             </button>
           </div>
 

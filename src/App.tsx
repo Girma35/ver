@@ -9,6 +9,16 @@ import {
   getVerificationFile,
   saveVerificationSubmission,
 } from './lib/verificationDb';
+import { isSupabaseConfigured } from './lib/supabase';
+import { createKycSignedUrl, uploadKycFile } from './lib/documentStorage';
+import {
+  loadCloudState,
+  resetCloudState,
+  savePreferencesToCloud,
+  saveVerificationToCloud,
+  saveWalletToCloud,
+  type CloudSyncStatus,
+} from './lib/cloudStore';
 
 const STORAGE_KEY_VERIFICATION = 'workethio_verification_state_v3';
 const STORAGE_KEY_WALLET = 'workethio_wallet_state_v3';
@@ -26,9 +36,11 @@ const INITIAL_VERIFICATION_STATE: VerificationState = {
   idFileName: null,
   idFileId: null,
   idPreviewUrl: null,
+  idFilePath: null,
   selfieFileName: null,
   selfieFileId: null,
   selfiePreviewUrl: null,
+  selfieFilePath: null,
   consentGiven: true,
   submissionId: null,
 };
@@ -93,6 +105,15 @@ export default function App() {
     return INITIAL_WALLET_STATE;
   });
 
+  // Cloud (Supabase) sync status for the single demo user
+  const [cloudStatus, setCloudStatus] = useState<CloudSyncStatus>(
+    isSupabaseConfigured ? 'connecting' : 'local'
+  );
+  // Keeps the save effects from writing defaults over stored cloud data before the first read.
+  const cloudReadyRef = useRef<boolean>(!isSupabaseConfigured);
+  // Last cloud failure, surfaced in the footer tooltip so setup issues are diagnosable.
+  const [cloudError, setCloudError] = useState<string | null>(null);
+
   // Sync to Session Storage
   useEffect(() => {
     try {
@@ -122,24 +143,45 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
+    const { idFileId, selfieFileId, idFilePath, selfieFilePath } = verificationState;
+
+    if (!idFileId && !selfieFileId && !idFilePath && !selfieFilePath) return;
 
     const hydrateFiles = async () => {
       const updates: Partial<VerificationState> = {};
 
-      if (verificationState.idFileId) {
-        const stored = await getVerificationFile(verificationState.idFileId);
-        if (stored) {
-          updates.idPreviewUrl = URL.createObjectURL(stored.blob);
-          updates.idFileName = stored.name;
-        }
+      const localId = idFileId ? await getVerificationFile(idFileId) : null;
+      const localSelfie = selfieFileId ? await getVerificationFile(selfieFileId) : null;
+
+      if (localId) {
+        updates.idPreviewUrl = URL.createObjectURL(localId.blob);
+        updates.idFileName = localId.name;
+      }
+      if (localSelfie) {
+        updates.selfiePreviewUrl = URL.createObjectURL(localSelfie.blob);
+        updates.selfieFileName = localSelfie.name;
       }
 
-      if (verificationState.selfieFileId) {
-        const stored = await getVerificationFile(verificationState.selfieFileId);
-        if (stored) {
-          updates.selfiePreviewUrl = URL.createObjectURL(stored.blob);
-          updates.selfieFileName = stored.name;
-        }
+      // No local copy (e.g. another device): fall back to the stored object.
+      if (!localId && idFilePath) {
+        const signedUrl = await createKycSignedUrl(idFilePath);
+        if (signedUrl) updates.idPreviewUrl = signedUrl;
+      }
+      if (!localSelfie && selfieFilePath) {
+        const signedUrl = await createKycSignedUrl(selfieFilePath);
+        if (signedUrl) updates.selfiePreviewUrl = signedUrl;
+      }
+
+      // A file saved before Storage was configured gets uploaded now.
+      if (localId && !idFilePath) {
+        const path = await uploadKycFile(localId.blob, 'id', localId.name).catch(() => null);
+        if (path) updates.idFilePath = path;
+      }
+      if (localSelfie && !selfieFilePath) {
+        const path = await uploadKycFile(localSelfie.blob, 'selfie', localSelfie.name).catch(
+          () => null
+        );
+        if (path) updates.selfieFilePath = path;
       }
 
       if (!cancelled && Object.keys(updates).length > 0) {
@@ -152,9 +194,14 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-    // Hydrate once on mount from stored file IDs.
+    // Re-hydrate when the stored file ids or cloud paths change (session cache or cloud load).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [
+    verificationState.idFileId,
+    verificationState.selfieFileId,
+    verificationState.idFilePath,
+    verificationState.selfieFilePath,
+  ]);
 
   useEffect(() => {
     try {
@@ -163,6 +210,109 @@ export default function App() {
       // Ignore
     }
   }, [walletState]);
+
+  // Read the single-user cloud state once on mount (Supabase rows, when configured)
+  useEffect(() => {
+    if (!isSupabaseConfigured) return;
+
+    let cancelled = false;
+
+    const loadFromCloud = async () => {
+      try {
+        const cloud = await loadCloudState();
+        if (cancelled) return;
+
+        if (cloud?.wallet) setWalletState(cloud.wallet);
+        if (cloud?.verification) {
+          setVerificationState((prev) => ({
+            ...prev,
+            ...cloud.verification,
+            idPreviewUrl: prev.idPreviewUrl,
+            selfiePreviewUrl: prev.selfiePreviewUrl,
+          }));
+        }
+        if (cloud?.preferences) {
+          setLanguage(cloud.preferences.language);
+          setCurrentPage(cloud.preferences.currentPage);
+        }
+
+        setCloudStatus('synced');
+        setCloudError(null);
+      } catch (error) {
+        console.warn('[WorkEthio] Cloud load failed, staying local:', error);
+        if (!cancelled) {
+          setCloudStatus('error');
+          setCloudError(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        cloudReadyRef.current = true;
+      }
+    };
+
+    void loadFromCloud();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Mirror each state slice back to the cloud after it settles
+  useEffect(() => {
+    if (!cloudReadyRef.current || !isSupabaseConfigured) return;
+
+    const timer = setTimeout(() => {
+      saveWalletToCloud(walletState)
+        .then(() => {
+          setCloudStatus('synced');
+          setCloudError(null);
+        })
+        .catch((error) => {
+          console.warn('[WorkEthio] Wallet sync failed:', error);
+          setCloudStatus('error');
+          setCloudError(error instanceof Error ? error.message : String(error));
+        });
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [walletState]);
+
+  useEffect(() => {
+    if (!cloudReadyRef.current || !isSupabaseConfigured) return;
+
+    const timer = setTimeout(() => {
+      saveVerificationToCloud(verificationState)
+        .then(() => {
+          setCloudStatus('synced');
+          setCloudError(null);
+        })
+        .catch((error) => {
+          console.warn('[WorkEthio] Verification sync failed:', error);
+          setCloudStatus('error');
+          setCloudError(error instanceof Error ? error.message : String(error));
+        });
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [verificationState]);
+
+  useEffect(() => {
+    if (!cloudReadyRef.current || !isSupabaseConfigured) return;
+
+    const timer = setTimeout(() => {
+      savePreferencesToCloud(language, currentPage)
+        .then(() => {
+          setCloudStatus('synced');
+          setCloudError(null);
+        })
+        .catch((error) => {
+          console.warn('[WorkEthio] Preference sync failed:', error);
+          setCloudStatus('error');
+          setCloudError(error instanceof Error ? error.message : String(error));
+        });
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [language, currentPage]);
 
   const verificationRef = useRef(verificationState);
   verificationRef.current = verificationState;
@@ -219,6 +369,10 @@ export default function App() {
       URL.revokeObjectURL(verificationState.selfiePreviewUrl);
     }
     void clearVerificationDatabase();
+    void resetCloudState().catch((error) => {
+      console.warn('[WorkEthio] Cloud reset failed:', error);
+      setCloudStatus('error');
+    });
     setVerificationState(INITIAL_VERIFICATION_STATE);
     setWalletState(INITIAL_WALLET_STATE);
     setCurrentPage('tasks');
@@ -226,6 +380,33 @@ export default function App() {
 
   const isAm = language === 'am';
   const isOm = language === 'om';
+
+  const cloudStatusLabel =
+    cloudStatus === 'synced'
+      ? 'Cloud saved'
+      : cloudStatus === 'connecting'
+      ? 'Cloud: connecting'
+      : cloudStatus === 'error'
+      ? 'Cloud: offline'
+      : 'Local only';
+
+  const cloudStatusTitle =
+    cloudStatus === 'local'
+      ? 'Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env to save to Supabase'
+      : cloudStatus === 'error'
+      ? `Supabase request failed — changes stay in this browser only${
+          cloudError ? ` (${cloudError})` : ''
+        }`
+      : 'Wallet, verification and preferences are stored in Supabase';
+
+  const cloudStatusDotClass =
+    cloudStatus === 'synced'
+      ? 'bg-emerald-500'
+      : cloudStatus === 'connecting'
+      ? 'bg-amber-500 animate-pulse'
+      : cloudStatus === 'error'
+      ? 'bg-rose-500'
+      : 'bg-slate-400';
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans selection:bg-slate-200">
@@ -277,10 +458,15 @@ export default function App() {
             </span>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2">
             <span className="flex items-center gap-1 text-slate-500">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
               <span>NIDP Fayda Compliant</span>
+            </span>
+
+            <span className="flex items-center gap-1 text-slate-500" title={cloudStatusTitle}>
+              <span className={`w-1.5 h-1.5 rounded-full ${cloudStatusDotClass}`} />
+              <span>{cloudStatusLabel}</span>
             </span>
 
             <button

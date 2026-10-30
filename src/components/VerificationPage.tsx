@@ -14,6 +14,7 @@ import {
   deleteVerificationFile,
   saveVerificationFile,
 } from '../lib/verificationDb';
+import { deleteKycFile, uploadKycFile } from '../lib/documentStorage';
 import {
   UploadCloud,
   FileText,
@@ -111,6 +112,8 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   ): Promise<void> => {
     const stored = await saveVerificationFile(file, kind, fileName);
     const previewUrl = URL.createObjectURL(stored.blob);
+    // Local copy first so the preview is instant; Storage sync is best-effort.
+    const cloudPath = await uploadKycFile(stored.blob, kind, fileName).catch(() => null);
 
     if (kind === 'id') {
       if (state.idPreviewUrl?.startsWith('blob:')) {
@@ -119,10 +122,14 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
       if (state.idFileId) {
         await deleteVerificationFile(state.idFileId).catch(() => undefined);
       }
+      if (state.idFilePath && state.idFilePath !== cloudPath) {
+        await deleteKycFile(state.idFilePath).catch(() => undefined);
+      }
       onUpdateState({
         idFileName: stored.name,
         idFileId: stored.id,
         idPreviewUrl: previewUrl,
+        idFilePath: cloudPath,
         documentType: selectedDocType,
       });
       return;
@@ -134,10 +141,14 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     if (state.selfieFileId) {
       await deleteVerificationFile(state.selfieFileId).catch(() => undefined);
     }
+    if (state.selfieFilePath && state.selfieFilePath !== cloudPath) {
+      await deleteKycFile(state.selfieFilePath).catch(() => undefined);
+    }
     onUpdateState({
       selfieFileName: stored.name,
       selfieFileId: stored.id,
       selfiePreviewUrl: previewUrl,
+      selfieFilePath: cloudPath,
     });
   };
 
@@ -238,10 +249,12 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     if (state.idFileId) {
       void deleteVerificationFile(state.idFileId).catch(() => undefined);
     }
+    void deleteKycFile(state.idFilePath).catch(() => undefined);
     onUpdateState({
       idFileName: null,
       idFileId: null,
       idPreviewUrl: null,
+      idFilePath: null,
     });
     if (idInputRef.current) idInputRef.current.value = '';
   };
@@ -254,10 +267,12 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     if (state.selfieFileId) {
       void deleteVerificationFile(state.selfieFileId).catch(() => undefined);
     }
+    void deleteKycFile(state.selfieFilePath).catch(() => undefined);
     onUpdateState({
       selfieFileName: null,
       selfieFileId: null,
       selfiePreviewUrl: null,
+      selfieFilePath: null,
     });
     if (selfieInputRef.current) selfieInputRef.current.value = '';
   };
@@ -346,7 +361,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
 
     return (
       <div className="max-w-3xl mx-auto py-10 px-4 sm:px-6">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 sm:p-10 text-center">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 sm:p-10 text-center">
           {/* Success Icon */}
           <div className="w-16 h-16 bg-emerald-50 border border-emerald-200 rounded-full flex items-center justify-center mx-auto mb-6 text-emerald-600 shadow-xs">
             <CheckCircle2 className="w-9 h-9" />
@@ -450,7 +465,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   if (isSimulating) {
     return (
       <div className="max-w-2xl mx-auto py-12 px-4 sm:px-6">
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8 sm:p-10">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5 sm:p-10">
           <div className="text-center mb-8">
             <div className="w-14 h-14 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-4 relative">
               <RefreshCw className="w-7 h-7 text-slate-800 animate-spin" />
@@ -785,7 +800,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                   handleIdFileUpload(e.dataTransfer.files[0]);
                 }
               }}
-              className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-lg p-8 text-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-slate-50"
+              className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-lg p-5 sm:p-8 text-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-slate-50"
             >
               <input
                 ref={idInputRef}
@@ -916,7 +931,7 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
                   handleSelfieFileUpload(e.dataTransfer.files[0]);
                 }
               }}
-              className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-lg p-8 text-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-slate-50"
+              className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-lg p-5 sm:p-8 text-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-slate-50"
             >
               <input
                 ref={selfieInputRef}
