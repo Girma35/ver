@@ -56,10 +56,10 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
   const storedInCloud = Boolean(state.idFilePath || state.selfieFilePath);
 
   // Applicant info state
-  const [applicantName, setApplicantName] = useState(state.applicantName || 'Abebe Bikila');
-  const [phoneNumber, setPhoneNumber] = useState(state.phoneNumber || '+251 91 123 4567');
-  const [city, setCity] = useState(state.city || 'Addis Ababa (Bole)');
-  const [idNumber, setIdNumber] = useState(state.idNumber || 'FIN-0982-1402-9912');
+  const [applicantName, setApplicantName] = useState(state.applicantName || '');
+  const [phoneNumber, setPhoneNumber] = useState(state.phoneNumber || '');
+  const [city, setCity] = useState(state.city || '');
+  const [idNumber, setIdNumber] = useState(state.idNumber || '');
 
   // Form state
   const [selectedDocType, setSelectedDocType] = useState<DocumentType>(state.documentType || 'fayda');
@@ -246,16 +246,16 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
       await persistFile(blob, fileName, 'id');
       onUpdateState({
         documentType: 'fayda',
-        applicantName: applicantName || 'Abebe Bikila',
-        idNumber: idNumber || 'FIN-0982-1402-9912',
+        applicantName,
+        idNumber,
       });
     })().catch(() => {
       onUpdateState({
         idFileName: fileName,
         idPreviewUrl: SAMPLE_ID_IMAGE,
         documentType: 'fayda',
-        applicantName: applicantName || 'Abebe Bikila',
-        idNumber: idNumber || 'FIN-0982-1402-9912',
+        applicantName,
+        idNumber,
       });
     });
   };

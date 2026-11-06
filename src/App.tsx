@@ -28,11 +28,11 @@ const STORAGE_KEY_LANG = 'workethio_language_v3';
 const INITIAL_VERIFICATION_STATE: VerificationState = {
   isVerified: false,
   verifiedAt: null,
-  applicantName: 'Abebe Bikila',
-  phoneNumber: '+251 91 123 4567',
-  city: 'Addis Ababa (Bole)',
+  applicantName: '',
+  phoneNumber: '',
+  city: '',
   documentType: 'fayda',
-  idNumber: 'FIN-0982-1402-9912',
+  idNumber: '',
   idFileName: null,
   idFileId: null,
   idPreviewUrl: null,
@@ -49,7 +49,7 @@ const INITIAL_WALLET_STATE: UserWallet = {
   balanceEtb: 0,
   completedTasks: [],
   withdrawalMethod: 'telebirr',
-  phoneNumberOrAccount: '0911234567',
+  phoneNumberOrAccount: '',
 };
 
 export default function App() {
