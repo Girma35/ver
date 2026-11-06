@@ -12,6 +12,7 @@ import {
 import {
   blobFromUrl,
   deleteVerificationFile,
+  getVerificationFile,
   saveVerificationFile,
 } from '../lib/verificationDb';
 import { deleteKycFile, uploadKycFile } from '../lib/documentStorage';
@@ -117,39 +118,10 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
     file: Blob,
     fileName: string,
     kind: 'id' | 'selfie'
-  ): Promise<void> => {
+  ): Promise<string | null> => {
     const previousPath = kind === 'id' ? state.idFilePath : state.selfieFilePath;
 
-    // STEP 1 — as soon as a file is attached it goes straight to Supabase Storage.
-    // This runs before any local work so a slow disk/IndexedDB never delays it.
-    let uploadedPath: string | null = null;
-    const uploadTask = uploadKycFile(file, kind, fileName)
-      .then((cloudPath) => {
-        uploadedPath = cloudPath;
-        if (!cloudPath) return;
-        onUpdateState(kind === 'id' ? { idFilePath: cloudPath } : { selfieFilePath: cloudPath });
-        setUploadError(null);
-      })
-      .catch(() => {
-        setUploadError(
-          isOm
-            ? 'Faayiliin Supabase irratti hin olkaa\'amne. Irra deebi\'aa yaalaa.'
-            : isAm
-            ? 'ፋይሉ Supabase ላይ አልተሰቀለም። እባክዎ በድጋሚ ይሞክሩ።'
-            : 'The document could not be uploaded to Supabase Storage.'
-        );
-      });
-
-    pendingUploadsRef.current.push(uploadTask);
-    void uploadTask.finally(() => {
-      pendingUploadsRef.current = pendingUploadsRef.current.filter((item) => item !== uploadTask);
-      // Only drop the old object once its replacement is safely stored.
-      if (uploadedPath && previousPath && previousPath !== uploadedPath) {
-        void deleteKycFile(previousPath).catch(() => undefined);
-      }
-    });
-
-    // STEP 2 — local copy so the preview renders instantly.
+    // STEP 1 — local copy so the preview renders instantly.
     const stored = await saveVerificationFile(file, kind, fileName);
     const previewUrl = URL.createObjectURL(stored.blob);
 
@@ -166,21 +138,48 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
         idPreviewUrl: previewUrl,
         documentType: selectedDocType,
       });
-      return;
+    } else {
+      if (state.selfiePreviewUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(state.selfiePreviewUrl);
+      }
+      if (state.selfieFileId) {
+        await deleteVerificationFile(state.selfieFileId).catch(() => undefined);
+      }
+      onUpdateState({
+        selfieFileName: stored.name,
+        selfieFileId: stored.id,
+        selfiePreviewUrl: previewUrl,
+      });
     }
 
-    if (state.selfiePreviewUrl?.startsWith('blob:')) {
-      URL.revokeObjectURL(state.selfiePreviewUrl);
+    // STEP 2 — upload straight to Supabase Storage
+    setIsUploading(true);
+    setUploadError(null);
+    let uploadedPath: string | null = null;
+    try {
+      uploadedPath = await uploadKycFile(file, kind, fileName);
+      if (uploadedPath) {
+        onUpdateState(kind === 'id' ? { idFilePath: uploadedPath } : { selfieFilePath: uploadedPath });
+        if (previousPath && previousPath !== uploadedPath) {
+          void deleteKycFile(previousPath).catch(() => undefined);
+        }
+      }
+    } catch (err) {
+      console.error(`[WorkEthio] Failed to upload ${kind} photo to Supabase:`, err);
+      setUploadError(
+        isOm
+          ? "Faayiliin Supabase irratti hin olkaa'amne. Irra deebi'aa yaalaa."
+          : isAm
+          ? 'ፋይሉ Supabase ላይ አልተሰቀለም። እባክዎ በድጋሚ ይሞክሩ።'
+          : 'The document could not be uploaded to Supabase Storage.'
+      );
+    } finally {
+      setIsUploading(false);
     }
-    if (state.selfieFileId) {
-      await deleteVerificationFile(state.selfieFileId).catch(() => undefined);
-    }
-    onUpdateState({
-      selfieFileName: stored.name,
-      selfieFileId: stored.id,
-      selfiePreviewUrl: previewUrl,
-    });
+
+    return uploadedPath;
   };
+
 
   // Accept anything that is clearly an image: phone cameras may report image/heic,
   // image/webp, or no MIME type at all.
@@ -353,10 +352,28 @@ export const VerificationPage: React.FC<VerificationPageProps> = ({
       idNumber,
     });
 
-    // Wait for any in-flight Storage upload so the stored paths are known first.
-    if (pendingUploadsRef.current.length > 0) {
-      setIsUploading(true);
-      await Promise.allSettled(pendingUploadsRef.current);
+
+    // Ensure documents are saved in Supabase Storage before verification
+    if (!state.idFilePath && state.idFileId) {
+
+      const localId = await getVerificationFile(state.idFileId);
+      if (localId) {
+        const idPath = await uploadKycFile(localId.blob, 'id', localId.name).catch(() => null);
+        if (idPath) onUpdateState({ idFilePath: idPath });
+      }
+    }
+
+    if (!state.selfieFilePath && state.selfieFileId) {
+
+      const localSelfie = await getVerificationFile(state.selfieFileId);
+      if (localSelfie) {
+        const selfiePath = await uploadKycFile(localSelfie.blob, 'selfie', localSelfie.name).catch(() => null);
+        if (selfiePath) onUpdateState({ selfieFilePath: selfiePath });
+      }
+
+
+
+
       setIsUploading(false);
     }
 

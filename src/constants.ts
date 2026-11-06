@@ -1,8 +1,12 @@
 import { DocumentTypeOption, EarningTask } from './types';
 
-export const SAMPLE_ID_IMAGE = '/src/assets/images/ethiopian_demo_id_1793349882840.jpg';
-export const SAMPLE_SELFIE_IMAGE = '/src/assets/images/ethiopian_sample_selfie_1793349883592.jpg';
-export const HERO_WORKSPACE_IMAGE = '/src/assets/images/ethiopian_digital_work_1793349883876.jpg';
+import sampleIdImg from './assets/images/ethiopian_demo_id_1793349882840.jpg';
+import sampleSelfieImg from './assets/images/ethiopian_sample_selfie_1793349883592.jpg';
+import heroWorkspaceImg from './assets/images/ethiopian_digital_work_1793349883876.jpg';
+
+export const SAMPLE_ID_IMAGE = sampleIdImg;
+export const SAMPLE_SELFIE_IMAGE = sampleSelfieImg;
+export const HERO_WORKSPACE_IMAGE = heroWorkspaceImg;
 
 export const DOCUMENT_TYPES: DocumentTypeOption[] = [
   {

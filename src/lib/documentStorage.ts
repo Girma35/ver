@@ -18,8 +18,13 @@ const SIGNED_URL_TTL_SECONDS = 60 * 60 * 24;
 const KINDS: VerificationFileKind[] = ['id', 'selfie'];
 
 function safeFileName(fileName: string): string {
-  const cleaned = fileName.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/^_+/, '');
-  return cleaned.length > 0 ? cleaned.slice(-80) : 'document';
+  const parts = fileName.split('.');
+  const ext = parts.length > 1 ? parts.pop()?.toLowerCase().replace(/[^a-z0-9]/g, '') : '';
+  const base = parts.join('.').replace(/[^a-zA-Z0-9_-]/g, '_').replace(/^_+|_+$/g, '');
+  const cleanBase = base.length > 0 ? base.slice(-60) : 'document';
+  return ext ? `${cleanBase}.${ext}` : cleanBase;
+
+
 }
 
 // Deterministic path: re-uploading the same file overwrites one object instead of
@@ -63,7 +68,10 @@ export async function uploadKycFile(
     upsert: true,
   });
 
-  if (error) throw new Error(`Could not upload ${kind} document: ${error.message}`);
+  if (error) {
+    console.error(`[WorkEthio] Supabase Storage upload failed for ${path}:`, error);
+    throw new Error(`Could not upload ${kind} document: ${error.message}`);
+  }
   return path;
 }
 

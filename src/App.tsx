@@ -153,11 +153,11 @@ export default function App() {
       const localId = idFileId ? await getVerificationFile(idFileId) : null;
       const localSelfie = selfieFileId ? await getVerificationFile(selfieFileId) : null;
 
-      if (localId) {
+      if (localId && !verificationState.idPreviewUrl) {
         updates.idPreviewUrl = URL.createObjectURL(localId.blob);
         updates.idFileName = localId.name;
       }
-      if (localSelfie) {
+      if (localSelfie && !verificationState.selfiePreviewUrl) {
         updates.selfiePreviewUrl = URL.createObjectURL(localSelfie.blob);
         updates.selfieFileName = localSelfie.name;
       }
@@ -352,10 +352,11 @@ export default function App() {
       createdAt: new Date().toISOString(),
     })
       .then((saved) => {
-        setVerificationState((prev) => ({
-          ...prev,
-          submissionId: saved.id ?? prev.submissionId,
-        }));
+        setVerificationState((prev) => {
+          const next = { ...prev, submissionId: saved.id ?? prev.submissionId };
+          if (isSupabaseConfigured) void saveVerificationToCloud(next).catch(() => undefined);
+          return next;
+        });
       })
       .catch(() => undefined);
   };
